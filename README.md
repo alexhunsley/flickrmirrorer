@@ -1,9 +1,11 @@
 IMPORTANT NOTE
 ==============
 
-Although this script seems to resume the download job if you restart it after a server error, it is known to sometimes not download all files despite appearing to resume the job and finish it.
+This script does not at present work around flickr's faulty returning of paged results. This means that sometimes you can be missing photos in your downloaded photostream (and hence may have dead symlinks in the albums and collections folders).
 
-** If there is a error while running this script, delete the download folder for the job and start the download again scratch **
+More info at https://www.flickr.com/groups/51035612836@N01/discuss/72157685797001754/
+
+Related issue in the original repo: https://github.com/markdoliner/flickrmirrorer/issues/21
 
 Overview
 ========

@@ -281,6 +281,7 @@ class FlickrMirrorer(object):
 
         download_errors = []
         while True:
+            print "   ___ calling people_getPhotos batch = %d page = %d" % (batchSize, current_page)
             rsp = self.flickr.people_getPhotos(
                 user_id='me',
                 extras=metadata_fields,
@@ -293,7 +294,7 @@ class FlickrMirrorer(object):
 
             if doSinglePageNumber != None:
                 if len(photos) < NUM_PHOTOS_PER_RETRY_BATCH:
-                    print "** Small batch didn't give me the paltry amount of photos I wanted, retrying the request..."
+                    print "** Small batch didn't give me the paltry amount of photos I wanted (wanted %d, got %d), retrying the request..." % (NUM_PHOTOS_PER_RETRY_BATCH, len(photos))
                     continue
 
             inBatchIndex = 0
@@ -307,7 +308,8 @@ class FlickrMirrorer(object):
                 if (photo['media'] == 'photo' and not self.ignore_photos) or (
                         photo['media'] == 'video' and not self.ignore_videos):
                     try:
-                        new_files |= self._download_photo(photo, inBatchIndex, current_page)
+                        pass
+                        # new_files |= self._download_photo(photo, inBatchIndex, current_page)
 
                     except VideoDownloadError as e:
                         print "=========== skipped a video at batch idx = %d, number = %d" % (inBatchIndex, current_page)
@@ -321,21 +323,21 @@ class FlickrMirrorer(object):
                         break
                 else:
                     numberMissingImages = batchSize - inBatchIndex
-                    numberSmallPagesToRequest = numberMissingImages / math.ceil(numberMissingImages / NUM_PHOTOS_PER_RETRY_BATCH)
+                    numberSmallPagesToRequest = math.ceil(numberMissingImages / NUM_PHOTOS_PER_RETRY_BATCH)
 
-                    print "  **>> ouch! got missing images! count = %d, which means %d small pages to request" %(numberMissingImages, numberSmallPagesToRequest)
+                    print "  **>> ouch! got missing images! count = %d, which means %d small pages to request" % (numberMissingImages, numberSmallPagesToRequest)
 
                     # e.g. currentPage = 1, 100 per batch: = 100 * 1 / 10 - 1= 10 -1 = 9th page of 10sized pages 
 
                     # for a failure of 10 images or less, these will be the same number (page)
-                    targetStartPointInSmallPagesZeroBased = (NUM_PHOTOS_PER_BATCH * currentPage) / NUM_PHOTOS_PER_RETRY_BATCH - numberSmallPagesToRequest
-                    targetEndPointInSmallPagesZeroBased = (NUM_PHOTOS_PER_BATCH * currentPage) / NUM_PHOTOS_PER_RETRY_BATCH - 1
+                    targetStartPointInSmallPagesZeroBased = int((NUM_PHOTOS_PER_BATCH * current_page) / NUM_PHOTOS_PER_RETRY_BATCH - numberSmallPagesToRequest)
+                    targetEndPointInSmallPagesZeroBased = int((NUM_PHOTOS_PER_BATCH * current_page) / NUM_PHOTOS_PER_RETRY_BATCH - 1)
 
                     print " ** (going to call retry on small pages in range %d to %d inclusive)" % (targetStartPointInSmallPagesZeroBased, targetEndPointInSmallPagesZeroBased)
 
                     for retrySmallPageIndex in range(targetStartPointInSmallPagesZeroBased, targetEndPointInSmallPagesZeroBased + 1):
                         print "   ** calling retry on a small page: doSinglePageNumber = %d" % retrySmallPageIndex
-                        _download_all_photos(batchSize = NUM_PHOTOS_PER_RETRY_BATCH, doSinglePageNumber = retrySmallPageIndex)
+                        self._download_all_photos(batchSize = NUM_PHOTOS_PER_RETRY_BATCH, doSinglePageNumber = retrySmallPageIndex)
 
             current_page += 1
 
@@ -350,11 +352,12 @@ class FlickrMirrorer(object):
                 sys.stderr.write('  %s\n' % error)
             sys.exit(1)
 
+            # temp disable this while we've disabled downloading
         # Error out if we didn't fetch any photos
-        if not new_files:
-            sys.stderr.write('Error: The Flickr API returned an empty list of photos. '
-                             'Bailing out without deleting any local copies in case this is an anomaly.\n')
-            sys.exit(1)
+        # if not new_files:
+        #     sys.stderr.write('Error: The Flickr API returned an empty list of photos. '
+        #                      'Bailing out without deleting any local copies in case this is an anomaly.\n')
+        #     sys.exit(1)
 
 
     def _download_photo(self, photo, inBatchIndex, currentPage):

@@ -82,6 +82,8 @@ Please authorize Flickr Mirrorer to read your photos, titles, tags, etc.
 
 NUM_PHOTOS_PER_BATCH = 500
 
+# size of batches when we want to get missing photos from end of a normal batch
+NUM_PHOTOS_PER_RETRY_BATCH = 10
 
 class VideoDownloadError(Exception):
     def __str__(self):
@@ -236,6 +238,10 @@ class FlickrMirrorer(object):
         # Fetch photos
         self._download_all_photos()
 
+        # Divide by 2 because we want to ignore the photo metadata files
+        # for the purposes of our statistics.
+        self.deleted_photos = self._delete_unknown_files(self.photostream_dir, new_files, 'file') / 2
+
         # Create albums and collections
         self._mirror_albums()
         self._create_not_in_any_album_dir()
@@ -252,7 +258,7 @@ class FlickrMirrorer(object):
         print('Modified albums: %d' % self.modified_albums)
         print('Modified collections: %d' % self.modified_collections)
 
-    def _download_all_photos(self):
+    def _download_all_photos(self, batchSize = NUM_PHOTOS_PER_BATCH, doSinglePageNumber = None):
         """Download all our pictures and metadata.
         If you have a lot of photos then this function will take a while."""
 
@@ -262,7 +268,10 @@ class FlickrMirrorer(object):
 
         new_files = set()
 
-        current_page = 1
+        if doSinglePageNumber == None:
+            current_page = 1
+        else:
+            current_page = doSinglePageNumber
 
         metadata_fields = ('description,license,date_upload,date_taken,owner_name,icon_server,original_format,'
                            'last_update,geo,tags,machine_tags,o_dims,media')
@@ -275,23 +284,58 @@ class FlickrMirrorer(object):
             rsp = self.flickr.people_getPhotos(
                 user_id='me',
                 extras=metadata_fields,
-                per_page=NUM_PHOTOS_PER_BATCH,
+                per_page=batchSize,
                 page=current_page,
             )
             _validate_json_response(rsp)
 
             photos = rsp['photos']['photo']
+
+            if doSinglePageNumber != None:
+                if len(photos) < NUM_PHOTOS_PER_RETRY_BATCH:
+                    print "** Small batch didn't give me the paltry amount of photos I wanted, retrying the request..."
+                    continue
+
+            inBatchIndex = 0
+
+            print "===+++++++++++++ starting a batch"
+
             for photo in photos:
+                # increment this index even if it was a video
+                inBatchIndex += 1
+
                 if (photo['media'] == 'photo' and not self.ignore_photos) or (
                         photo['media'] == 'video' and not self.ignore_videos):
                     try:
-                        new_files |= self._download_photo(photo)
+                        new_files |= self._download_photo(photo, inBatchIndex, current_page)
+
                     except VideoDownloadError as e:
+                        print "=========== skipped a video at batch idx = %d, number = %d" % (inBatchIndex, current_page)
                         download_errors.append(e)
 
-            if current_page >= rsp['photos']['pages']:
-                # We've reached the end of the photostream. Stop looping.
-                break
+            if doSinglePageNumber == None:
+                if inBatchIndex == batchSize:
+                    # we got all images we wanted
+                    if current_page >= rsp['photos']['pages']:
+                        # We've reached the end of the photostream. Stop looping.
+                        break
+                else:
+                    numberMissingImages = batchSize - inBatchIndex
+                    numberSmallPagesToRequest = numberMissingImages / math.ceil(numberMissingImages / NUM_PHOTOS_PER_RETRY_BATCH)
+
+                    print "  **>> ouch! got missing images! count = %d, which means %d small pages to request" %(numberMissingImages, numberSmallPagesToRequest)
+
+                    # e.g. currentPage = 1, 100 per batch: = 100 * 1 / 10 - 1= 10 -1 = 9th page of 10sized pages 
+
+                    # for a failure of 10 images or less, these will be the same number (page)
+                    targetStartPointInSmallPagesZeroBased = (NUM_PHOTOS_PER_BATCH * currentPage) / NUM_PHOTOS_PER_RETRY_BATCH - numberSmallPagesToRequest
+                    targetEndPointInSmallPagesZeroBased = (NUM_PHOTOS_PER_BATCH * currentPage) / NUM_PHOTOS_PER_RETRY_BATCH - 1
+
+                    print " ** (going to call retry on small pages in range %d to %d inclusive)" % (targetStartPointInSmallPagesZeroBased, targetEndPointInSmallPagesZeroBased)
+
+                    for retrySmallPageIndex in range(targetStartPointInSmallPagesZeroBased, targetEndPointInSmallPagesZeroBased + 1):
+                        print "   ** calling retry on a small page: doSinglePageNumber = %d" % retrySmallPageIndex
+                        _download_all_photos(batchSize = NUM_PHOTOS_PER_RETRY_BATCH, doSinglePageNumber = retrySmallPageIndex)
 
             current_page += 1
 
@@ -312,11 +356,8 @@ class FlickrMirrorer(object):
                              'Bailing out without deleting any local copies in case this is an anomaly.\n')
             sys.exit(1)
 
-        # Divide by 2 because we want to ignore the photo metadata files
-        # for the purposes of our statistics.
-        self.deleted_photos = self._delete_unknown_files(self.photostream_dir, new_files, 'file') / 2
 
-    def _download_photo(self, photo):
+    def _download_photo(self, photo, inBatchIndex, currentPage):
         """Fetch and save a media item (photo or video) and the metadata
         associated with it.
 
@@ -324,6 +365,10 @@ class FlickrMirrorer(object):
         """
         url = self._get_photo_url(photo)
         photo_basename = self._get_photo_basename(photo)
+
+        # TODO remove this change - very temporary measure while debugging the problem!
+        photo_basename = "p%s_%s_" % (str(currentPage).zfill(2), str(inBatchIndex).zfill(3)) + photo_basename
+
         photo_filename = os.path.join(self.photostream_dir, photo_basename)
         metadata_basename = '%s.metadata' % photo_basename
         metadata_filename = '%s.metadata' % photo_filename
@@ -384,8 +429,12 @@ class FlickrMirrorer(object):
                     tmp_file.write(chunk)
             os.rename(self.tmp_filename, photo_filename)
         else:
-            self._verbose('Skipping %s because we already have it'
-                          % photo_basename)
+            sys.stderr.write(
+                'Error: download already exists, but should not, aborting.  %s: %s: %s\n'
+                % (url, request.status_code, request.reason))
+            sys.exit(1)
+            # self._verbose('Skipping %s because we already have it'
+            #               % photo_basename)
 
         # Write metadata
         if self._write_json_if_different(metadata_filename, photo):

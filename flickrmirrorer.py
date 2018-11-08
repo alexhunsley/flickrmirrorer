@@ -144,6 +144,7 @@ def get_photo_datetime(photo):
     Returns:
         datetime.datetime
     """
+    print('photo dict = %s' % photo)
     if photo['datetakenunknown'] == "0":
         return dateutil.parser.parse(photo['datetaken'])
 
@@ -235,12 +236,15 @@ class FlickrMirrorer(object):
         _ensure_dir_exists(self.dest_dir)
 
         # Fetch photos
-        self._download_all_photos()
+        # self._download_all_photos()
+        # tmp can delete below when above goes back!
+        _ensure_dir_exists(self.photostream_dir)
 
         # Create albums and collections
         self._mirror_albums()
         self._create_not_in_any_album_dir()
-        self._mirror_collections()
+        #TODO put back
+        # self._mirror_collections()
 
         self._print_statistics()
 
@@ -261,7 +265,7 @@ class FlickrMirrorer(object):
 
         _ensure_dir_exists(self.photostream_dir)
 
-        new_files = set()
+        new_or_modified_files = set()
 
         current_page = 1
 
@@ -329,13 +333,18 @@ class FlickrMirrorer(object):
         for rsp in responses:
             allPhotoItems.extend(rsp['photos']['photo'])
 
+        file_names = set()
+        new_or_modified_files = set()
+
         progBar = tqdm.tqdm(allPhotoItems)
         for photo in progBar:
             progBar.set_description('Downloading item %s' % photo['id'])
             if (photo['media'] == 'photo' and not self.ignore_photos) or (
                     photo['media'] == 'video' and not self.ignore_videos):
                 try:
-                    new_files |= self._download_photo(photo)
+                    (file_names_ret, new_or_modified_files_ret) = self._download_photo(photo)
+                    file_names |= file_names_ret
+                    new_or_modified_files |= new_or_modified_files_ret
                 except VideoDownloadError as e:
                     download_errors.append(e)
 
@@ -352,21 +361,31 @@ class FlickrMirrorer(object):
             sys.exit(1)
 
         # Error out if we didn't fetch any photos
-        if not new_files:
+        if not new_or_modified_files:
             sys.stderr.write('Error: The Flickr API returned an empty list of photos. '
                              'Bailing out without deleting any local copies in case this is an anomaly.\n')
             sys.exit(1)
 
         # Divide by 2 because we want to ignore the photo metadata files
         # for the purposes of our statistics.
-        self.deleted_photos = self._delete_unknown_files(self.photostream_dir, new_files, 'file') / 2
+
+        self.deleted_photos = self._delete_unknown_files(self.photostream_dir, file_names, 'file') / 2
 
     def _download_photo(self, photo):
         """Fetch and save a media item (photo or video) and the metadata
         associated with it.
 
-        Returns a python set containing the filenames for the data.
+        Returns a pair (A, B): 
+            A: the set containing the file names for photo and metadata (whether used or not)
+            B: a set of any created/updated files' filenames.
         """
+
+        # did_download_file = False
+
+        print('_________DownloadPhoto, got photo = %s' % photo)
+
+        updatedFiles = set()
+
         url = self._get_photo_url(photo)
         photo_basename = self._get_photo_basename(photo)
         photo_filename = os.path.join(self.photostream_dir, photo_basename)
@@ -396,7 +415,7 @@ class FlickrMirrorer(object):
             try:
                 with open(metadata_filename) as json_file:
                     metadata = json.load(json_file)
-                should_download_photo |= metadata['lastupdate'] != photo['lastupdate']
+                should_download_photo |= (metadata['lastupdate'] != photo['lastupdate'])
             except IOError as ex:
                 if ex.errno != errno.ENOENT:
                     sys.stderr.write('Error reading %s: %s\n' % (metadata_filename, ex))
@@ -426,7 +445,15 @@ class FlickrMirrorer(object):
                 # Use 1 MiB chunks.
                 for chunk in request.iter_content(2**20):
                     tmp_file.write(chunk)
+                    print('wrote a chunky')
+
+            tmp_file.close()
+            print('doing rename: %s => %s' % (self.tmp_filename, photo_filename))
             os.rename(self.tmp_filename, photo_filename)
+
+            updatedFiles |= {photo_filename}
+
+            # did_download_file = True
         else:
             self._verbose('Skipping %s because we already have it'
                           % photo_basename)
@@ -434,18 +461,25 @@ class FlickrMirrorer(object):
         # Write metadata
         if self._write_json_if_different(metadata_filename, photo):
             self._progress('Updated metadata for %s' % photo_basename)
+            updatedFiles |= {metadata_filename}
         else:
             self._verbose(
                 'Skipping metadata for %s because we already have it' %
                 photo_basename)
 
         photo_datetime = get_photo_datetime(photo)
-        self._set_timestamp_if_different(photo_datetime, photo_filename)
-        self._set_timestamp_if_different(photo_datetime, metadata_filename)
 
-        return {photo_basename, metadata_basename}
+        if self._set_timestamp_if_different(photo_datetime, photo_filename):
+            updatedFiles |= {photo_filename}
+
+        if self._set_timestamp_if_different(photo_datetime, metadata_filename):
+            updatedFiles |= {metadata_filename}
+
+        return ({photo_basename, metadata_basename}, updatedFiles)
+        # return {photo_basename, metadata_basename}
 
     def _mirror_albums(self):
+        self._verbose(" +++ Mirroring all albums")
         """Create a directory for each album, and create symlinks to the
         files in the photostream."""
         self._verbose('Mirroring albums')
@@ -465,6 +499,14 @@ class FlickrMirrorer(object):
         album_basename = self._get_album_dirname(album['id'], album['title']['_content'])
         album_dir = os.path.join(self.albums_dir, album_basename)
 
+
+        metadata_fields = ('description,license,date_upload,date_taken,owner_name,icon_server,original_format,'
+                           'last_update,geo,tags,machine_tags,o_dims,media')
+
+        if self.include_views:
+            metadata_fields += ',views'
+
+
         # Fetch list of photos
         photos = []
 
@@ -473,7 +515,7 @@ class FlickrMirrorer(object):
             # Fetch photos in this album
             rsp = self.flickr.photosets_getPhotos(
                 photoset_id=album['id'],
-                extras='original_format,media',
+                extras=metadata_fields, #'original_format,media',
                 per_page=NUM_PHOTOS_PER_BATCH,
                 page=current_page,
             )
@@ -483,6 +525,17 @@ class FlickrMirrorer(object):
                 if (photo['media'] == 'photo' and not self.ignore_photos) or (
                         photo['media'] == 'video' and not self.ignore_videos):
                     photos += [photo]
+
+                    try:
+                        # download photo if not previously fetched; some appear in albums but not
+                        # in the photostream! So they may not have been fetched during the
+                        # photostream stage.
+                        (file_names_ret, new_or_modified_files_ret) = self._download_photo(photo)
+                        if len(new_or_modified_files_ret) > 0:
+                            self._verbose("   >>>>>>>>> Downloaded a missing photo during album mirroring: %s" % new_or_modified_files_ret)
+                    except VideoDownloadError as e:
+                        pass
+
 
         # Include list of photo IDs in metadata, so we can tell if photos
         # were added or removed from the album when mirroring in the future.
@@ -535,7 +588,7 @@ class FlickrMirrorer(object):
         """Create a directory for photos that aren't in any album, and
         create symlinks to the files in the photostream."""
 
-        self._verbose('Creating local directory for photos not in any album')
+        self._verbose(' +++ Creating local directory for photos not in any album')
 
         album_dir = os.path.join(self.dest_dir, 'Not in any album')
 
@@ -560,6 +613,17 @@ class FlickrMirrorer(object):
                 if (photo['media'] == 'photo' and not self.ignore_photos) or (
                         photo['media'] == 'video' and not self.ignore_videos):
                     photos += [photo]
+
+                    try:
+                        # download photo if not previously fetched; some appear in albums but not
+                        # in the photostream! So they may not have been fetched during the
+                        # photostream stage.
+                        (file_names_ret, new_or_modified_files_ret) = self._download_photo(photo)
+                        if len(new_or_modified_files_ret) > 0:
+                            self._verbose("   >>>>>>>>> Downloaded a missing photo during mirroring of 'not in any album' dir: %s" % new_or_modified_files_ret)
+                    except VideoDownloadError as e:
+                        pass
+
             if not photos:
                 # We've reached the end of the photostream. Stop looping.
                 break
@@ -576,7 +640,7 @@ class FlickrMirrorer(object):
     def _mirror_collections(self):
         """Create a directory for each collection, and create symlinks to the
         albums."""
-        self._verbose('Mirroring collections')
+        self._verbose(' +++ Mirroring collections')
 
         collection_dirs = set()
 
@@ -719,6 +783,8 @@ class FlickrMirrorer(object):
         """Set the access and modified times of a file to the specified
         datetime.
 
+        Returns True if the file was updated (i.e. the provided datetime was different to existing file datetime)
+
         Args:
             photo_datetime (datetime.datetime)
         """
@@ -726,6 +792,8 @@ class FlickrMirrorer(object):
             timestamp = time.mktime(photo_datetime.timetuple())
             if timestamp != os.path.getmtime(filename):
                 os.utime(filename, (timestamp, timestamp))
+                return True
+            return False
         except OverflowError:
             self._progress('Error updating timestamp for: %s' % filename)
 
@@ -794,7 +862,8 @@ class FlickrMirrorer(object):
     def _cleanup(self):
         # Remove a temp file, if one exists
         try:
-            os.remove(self.tmp_filename)
+            pass
+            # os.remove(self.tmp_filename)
         except OSError as ex:
             if ex.errno != errno.ENOENT:
                 sys.stderr.write('Error deleting temp file %s: %s\n' % (self.tmp_filename, ex.strerror))

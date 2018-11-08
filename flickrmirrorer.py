@@ -54,6 +54,7 @@ import sys
 import time
 import webbrowser
 from six.moves import urllib
+import tqdm
 
 try:
     # We try importing simplejson first because it's faster than json
@@ -271,7 +272,17 @@ class FlickrMirrorer(object):
             metadata_fields += ',views'
 
         download_errors = []
+
+        responses = []
+
+        totalPhotosMetadatasToReturn = None
+
         while True:
+            if current_page == 1:
+                self._progress('Requesting page 1')
+            else:
+                self._progress('Requesting page %d / %d' % (current_page, 1 + totalPhotosMetadatasToReturn / NUM_PHOTOS_PER_BATCH))
+
             rsp = self.flickr.people_getPhotos(
                 user_id='me',
                 extras=metadata_fields,
@@ -280,20 +291,54 @@ class FlickrMirrorer(object):
             )
             _validate_json_response(rsp)
 
-            photos = rsp['photos']['photo']
-            for photo in photos:
-                if (photo['media'] == 'photo' and not self.ignore_photos) or (
-                        photo['media'] == 'video' and not self.ignore_videos):
-                    try:
-                        new_files |= self._download_photo(photo)
-                    except VideoDownloadError as e:
-                        download_errors.append(e)
+            if current_page == 1:
+                totalPhotosMetadatasToReturn = int(rsp['photos']['total'])
 
-            if current_page >= rsp['photos']['pages']:
-                # We've reached the end of the photostream. Stop looping.
+            if current_page == rsp['photos']['pages']:
+                expectedRspItemCount = totalPhotosMetadatasToReturn % NUM_PHOTOS_PER_BATCH
+            else:                
+                expectedRspItemCount = NUM_PHOTOS_PER_BATCH
+
+            numPhotoMetadatasReturned = len(rsp['photos']['photo'])
+
+            self._verbose('  ... Fetched %d photo metadatas' % numPhotoMetadatasReturned)
+
+            if current_page == 1:
+                self._verbose('(Total photos to download: %d)' % totalPhotosMetadatasToReturn)
+
+            # Error out if the API didn't return the amount of metadata when expected
+            if numPhotoMetadatasReturned != expectedRspItemCount:
+                sys.stderr.write(
+                    'Problem: we expected to get %d photo metadatas for page %d of %d but the Flickr API returned only %d items.\n'
+                    'Consider running again with a different NUM_PHOTOS_PER_BATCH (maximum 500). Quitting.\n' 
+                        % (expectedRspItemCount, current_page, rsp['photos']['pages'], numPhotoMetadatasReturned))
+                sys.exit(1)
+
+            responses.append(rsp)
+
+            if current_page == rsp['photos']['pages']:
                 break
 
             current_page += 1
+
+        # print "exiting now"
+        # sys.exit(1)
+
+        allPhotoItems = []
+        # We have a valid set of responses that cover all photos requested; download them
+        for rsp in responses:
+            allPhotoItems.extend(rsp['photos']['photo'])
+
+        progBar = tqdm.tqdm(allPhotoItems)
+        for photo in progBar:
+            progBar.set_description('Downloading item %s' % photo['id'])
+            if (photo['media'] == 'photo' and not self.ignore_photos) or (
+                    photo['media'] == 'video' and not self.ignore_videos):
+                try:
+                    new_files |= self._download_photo(photo)
+                except VideoDownloadError as e:
+                    download_errors.append(e)
+
 
         # Error out if there were exceptions
         if download_errors:
@@ -363,7 +408,6 @@ class FlickrMirrorer(object):
             else:
                 self.modified_photos += 1
 
-            self._progress('Fetching %s' % photo_basename)
             request = requests.get(url, stream=True)
             if not request.ok:
                 if photo['media'] == 'video':

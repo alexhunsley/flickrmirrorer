@@ -250,8 +250,7 @@ class FlickrMirrorer(object):
         # Create albums and collections
         self._mirror_albums()
         self._create_not_in_any_album_dir()
-        #TODO put back
-        # self._mirror_collections()
+        self._mirror_collections()
 
         self._print_statistics()
 

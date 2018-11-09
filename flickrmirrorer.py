@@ -152,18 +152,25 @@ def get_photo_datetime(photo):
         datetime.datetime
     """
     print('photo dict = %s' % photo)
-    if photo['datetakenunknown'] == "0":
-        return dateutil.parser.parse(photo['datetaken'])
+
+    try:
+        if photo['datetakenunknown'] == "0":
+            return dateutil.parser.parse(photo['datetaken'])
+    except (ValueError, KeyError):
+        pass
 
     try:
         parsed = datetime.datetime.strptime(photo['title'], '%Y%m%d_%H%M%S')
         if parsed.year > 2000 and parsed < datetime.datetime.now():
             return parsed
-    except ValueError:
+    except (ValueError, KeyError):
         # Unable to parse photo title as datetime
         pass
 
-    return dateutil.parser.parse(photo['datetaken'])
+    try:
+        return dateutil.parser.parse(photo['datetaken'])
+    except (ValueError, KeyError):
+        return None
 
 
 class FlickrMirrorer(object):
@@ -486,6 +493,13 @@ class FlickrMirrorer(object):
                 if ex.errno != errno.ENOENT:
                     sys.stderr.write('Error reading %s: %s\n' % (metadata_filename, ex))
                     sys.exit(1)
+            except Exception as exe:
+                # download again, to be sure
+                should_download_photo = True
+                #print('exception comparing local metadata and photo metadata: ', exe)
+                #print('photo metadata dict: ', photo)
+                #print('local metadata dict: ', metadata)
+                # sys.exit(1)
 
         if should_download_photo:
             if not os.path.exists(photo_filename):
@@ -535,11 +549,16 @@ class FlickrMirrorer(object):
 
         photo_datetime = get_photo_datetime(photo)
 
-        if self._set_timestamp_if_different(photo_datetime, photo_filename):
+        if photo_datetime == None:
+            # if no datetime returned from flickr; re-download to be sure
             updatedFiles |= {photo_filename}
-
-        if self._set_timestamp_if_different(photo_datetime, metadata_filename):
             updatedFiles |= {metadata_filename}
+        else:            
+            if self._set_timestamp_if_different(photo_datetime, photo_filename):
+                updatedFiles |= {photo_filename}
+
+            if self._set_timestamp_if_different(photo_datetime, metadata_filename):
+                updatedFiles |= {metadata_filename}
 
         return ({photo_basename, metadata_basename}, updatedFiles)
         # return {photo_basename, metadata_basename}

@@ -55,6 +55,8 @@ import time
 import webbrowser
 from six.moves import urllib
 import tqdm
+from ratelimit import limits, RateLimitException, sleep_and_retry
+from backoff import on_exception, expo
 
 try:
     # We try importing simplejson first because it's faster than json
@@ -81,7 +83,12 @@ Please authorize Flickr Mirrorer to read your photos, titles, tags, etc.
 
 """
 
+
+FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD = 1
+FLICKR_API_LIMIT_PERIOD_LENGTH_SECS = 1
+
 NUM_PHOTOS_PER_BATCH = 500
+
 
 
 class VideoDownloadError(Exception):
@@ -209,9 +216,9 @@ class FlickrMirrorer(object):
         # if it fails then fall back to manual auth. Really flickrapi
         # should do that for us. Or at least print the URL to the
         # console.
-        if not self.flickr.token_valid(perms=six.u('read')):
-            self.flickr.get_request_token(oauth_callback=six.u('oob'))
-            authorize_url = self.flickr.auth_url(perms=six.u('read'))
+        if not self._flickrapi_token_valid(perms=six.u('read')):
+            self._flickrapi_get_request_token(oauth_callback=six.u('oob'))
+            authorize_url = self._flickrapi_auth_url(perms=six.u('read'))
             webbrowser.open_new_tab(authorize_url)
 
             # Use input on python 3 and newer. Use raw_input for
@@ -219,7 +226,7 @@ class FlickrMirrorer(object):
 
             verifier = getattr(__builtins__, 'raw_input', input)(PLEASE_GRANT_AUTHORIZATION_MSG % authorize_url)
 
-            self.flickr.get_access_token(six.u(verifier))
+            self._flickrapi_get_access_token(six.u(verifier))
 
         if self.ignore_photos and self.ignore_videos:
             sys.stderr.write(
@@ -247,6 +254,66 @@ class FlickrMirrorer(object):
         # self._mirror_collections()
 
         self._print_statistics()
+
+
+    # Wrap flickr API calls with a rate limiter.
+    # The recommended limit is no more than 3600 requests an hour, i.e. 1 per second.
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_token_valid(self, *args, **kwargs):
+        return self.flickr.token_valid(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_get_request_token(self, *args, **kwargs):
+        return self.flickr.get_request_token(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_auth_url(self, *args, **kwargs):
+        return self.flickr.auth_url(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_get_access_token(self, *args, **kwargs):
+        return self.flickr.get_access_token(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_people_getPhotos(self, *args, **kwargs):
+        return self.flickr.people_getPhotos(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_photosets_getList(self, *args, **kwargs):
+        return self.flickr.photosets_getList(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_photosets_getPhotos(self, *args, **kwargs):
+        return self.flickr.photosets_getPhotos(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_photos_getNotInSet(self, *args, **kwargs):
+        return self.flickr.photos_getNotInSet(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _flickrapi_collections_getTree(self, *args, **kwargs):
+        return self.flickr.collections_getTree(*args, **kwargs)
+
+    # general network request rate limiting
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _requests_get(self, *args, **kwargs):
+        return requests.get(*args, **kwargs)
+
+    @sleep_and_retry
+    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    def _requests_head(self, *args, **kwargs):
+        return requests.head(*args, **kwargs)
+
 
     def _print_statistics(self):
         if not self.print_statistics:
@@ -287,7 +354,7 @@ class FlickrMirrorer(object):
             else:
                 self._progress('Requesting page %d / %d' % (current_page, 1 + totalPhotosMetadatasToReturn / NUM_PHOTOS_PER_BATCH))
 
-            rsp = self.flickr.people_getPhotos(
+            rsp = self._flickr_people_getPhotos(
                 user_id='me',
                 extras=metadata_fields,
                 per_page=NUM_PHOTOS_PER_BATCH,
@@ -427,7 +494,7 @@ class FlickrMirrorer(object):
             else:
                 self.modified_photos += 1
 
-            request = requests.get(url, stream=True)
+            request = self._requests_get(url, stream=True)
             if not request.ok:
                 if photo['media'] == 'video':
                     raise VideoDownloadError(
@@ -487,7 +554,7 @@ class FlickrMirrorer(object):
         album_dirs = set()
 
         # Fetch albums
-        rsp = self.flickr.photosets_getList()
+        rsp = self._flickrapi_photosets_getList()
         _validate_json_response(rsp)
         if rsp['photosets']:
             for album in rsp['photosets']['photoset']:
@@ -513,7 +580,7 @@ class FlickrMirrorer(object):
         num_pages = int(math.ceil(float(album['photos']) / NUM_PHOTOS_PER_BATCH))
         for current_page in range(1, num_pages + 1):
             # Fetch photos in this album
-            rsp = self.flickr.photosets_getPhotos(
+            rsp = self._flickrapi_photosets_getPhotos(
                 photoset_id=album['id'],
                 extras=metadata_fields, #'original_format,media',
                 per_page=NUM_PHOTOS_PER_BATCH,
@@ -602,7 +669,7 @@ class FlickrMirrorer(object):
         current_page = 1
         while True:
             # Fetch list of photos that aren't in any album
-            rsp = self.flickr.photos_getNotInSet(
+            rsp = self._flickrapi_photos_getNotInSet(
                 extras='original_format,media',
                 per_page=NUM_PHOTOS_PER_BATCH,
                 page=current_page,
@@ -645,7 +712,7 @@ class FlickrMirrorer(object):
         collection_dirs = set()
 
         # Fetch collections
-        rsp = self.flickr.collections_getTree()
+        rsp = self._flickrapi_collections_getTree()
         _validate_json_response(rsp)
         if rsp['collections']:
             for collection in rsp['collections']['collection']:
@@ -739,7 +806,7 @@ class FlickrMirrorer(object):
             # https://www.flickr.com/groups/51035612836@N01/discuss/72157671986445591/72157673833636861
             # https://groups.yahoo.com/neo/groups/yws-flickr/conversations/topics/9610
             # https://groups.yahoo.com/neo/groups/yws-flickr/conversations/topics/9617
-            head = requests.head(self._get_photo_url(photo), allow_redirects=True)
+            head = self._requests_head(self._get_photo_url(photo), allow_redirects=True)
             if head.status_code is not 200:
                 raise VideoDownloadError(
                     'Manual download required: '

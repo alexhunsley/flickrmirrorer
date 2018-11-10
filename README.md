@@ -1,14 +1,3 @@
-IMPORTANT NOTE
-==============
-
-This script does not at present work around flickr's faulty/incomplete returning of paged results. This means that
-sometimes you can be missing photos in your downloaded photostream (and hence may have dead symlinks in the albums
-and collections folders).
-
-More info at https://www.flickr.com/groups/51035612836@N01/discuss/72157685797001754/
-
-Related issue in the original repo: https://github.com/markdoliner/flickrmirrorer/issues/21
-
 Overview
 ========
 A small command-line python script that creates a local backup of your

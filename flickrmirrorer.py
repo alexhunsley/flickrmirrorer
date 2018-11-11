@@ -55,6 +55,7 @@ import time
 import webbrowser
 from six.moves import urllib
 import tqdm
+from functools import wraps
 
 try:
     # We try importing simplejson first because it's faster than json
@@ -94,6 +95,7 @@ def universal_rate_limit(limitTimeSecs):
         lastCallTime = 0
 
     def real_universal_rate_limit(function):
+        @wraps(function)
         def wrapper(*args, **kwargs):
             nowTime = current_milli_time()
             millisSinceLastCall = nowTime - local.lastCallTime

@@ -85,7 +85,7 @@ Please authorize Flickr Mirrorer to read your photos, titles, tags, etc.
 
 
 FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD = 1
-FLICKR_API_LIMIT_PERIOD_LENGTH_SECS = 1
+FLICKR_API_LIMIT_PERIOD_LENGTH_SECS = 2
 
 NUM_PHOTOS_PER_BATCH = 500
 
@@ -360,7 +360,7 @@ class FlickrMirrorer(object):
             else:
                 self._progress('Requesting page %d / %d' % (current_page, 1 + totalPhotosMetadatasToReturn / NUM_PHOTOS_PER_BATCH))
 
-            rsp = self._flickr_people_getPhotos(
+            rsp = self._flickrapi_people_getPhotos(
                 user_id='me',
                 extras=metadata_fields,
                 per_page=NUM_PHOTOS_PER_BATCH,

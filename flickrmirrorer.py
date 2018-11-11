@@ -55,8 +55,6 @@ import time
 import webbrowser
 from six.moves import urllib
 import tqdm
-from ratelimit import limits, RateLimitException, sleep_and_retry
-from backoff import on_exception, expo
 
 try:
     # We try importing simplejson first because it's faster than json
@@ -84,10 +82,33 @@ Please authorize Flickr Mirrorer to read your photos, titles, tags, etc.
 """
 
 
-FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD = 1
-FLICKR_API_LIMIT_PERIOD_LENGTH_SECS = 2
+FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS = 1
 
 NUM_PHOTOS_PER_BATCH = 500
+
+
+current_milli_time = lambda: int(round(time.time() * 1000))
+
+def universal_rate_limit(limitTimeSecs):
+    class local:
+        lastCallTime = 0
+
+    def real_universal_rate_limit(function):
+        def wrapper(*args, **kwargs):
+            nowTime = current_milli_time()
+            millisSinceLastCall = nowTime - local.lastCallTime
+
+            waitTimeRequired = limitTimeSecs - millisSinceLastCall / 1000.0
+
+            if waitTimeRequired > 0: 
+                time.sleep(waitTimeRequired)
+
+            local.lastCallTime = current_milli_time()
+
+            return function(*args, **kwargs)
+
+        return wrapper
+    return real_universal_rate_limit
 
 
 
@@ -151,7 +172,7 @@ def get_photo_datetime(photo):
     Returns:
         datetime.datetime
     """
-    print('photo dict = %s' % photo)
+    # print('photo dict = %s' % photo)
 
     try:
         if photo['datetakenunknown'] == "0":
@@ -261,62 +282,50 @@ class FlickrMirrorer(object):
 
         self._print_statistics()
 
-
     # Wrap flickr API calls with a rate limiter.
     # The recommended limit is no more than 3600 requests an hour, i.e. 1 per second.
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    # @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_token_valid(self, *args, **kwargs):
         return self.flickr.token_valid(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    # @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_get_request_token(self, *args, **kwargs):
         return self.flickr.get_request_token(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    # @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_auth_url(self, *args, **kwargs):
         return self.flickr.auth_url(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    # @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_get_access_token(self, *args, **kwargs):
         return self.flickr.get_access_token(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_people_getPhotos(self, *args, **kwargs):
         return self.flickr.people_getPhotos(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_photosets_getList(self, *args, **kwargs):
         return self.flickr.photosets_getList(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_photosets_getPhotos(self, *args, **kwargs):
         return self.flickr.photosets_getPhotos(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_photos_getNotInSet(self, *args, **kwargs):
         return self.flickr.photos_getNotInSet(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _flickrapi_collections_getTree(self, *args, **kwargs):
         return self.flickr.collections_getTree(*args, **kwargs)
 
     # general network request rate limiting
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _requests_get(self, *args, **kwargs):
         return requests.get(*args, **kwargs)
 
-    @sleep_and_retry
-    @limits(calls=FLICKR_API_LIMIT_MAX_CALLS_IN_PERIOD, period=FLICKR_API_LIMIT_PERIOD_LENGTH_SECS)
+    @universal_rate_limit(FLICKR_API_LIMIT_NUMBER_OF_SECONDS_BETWEEN_CALLS)
     def _requests_head(self, *args, **kwargs):
         return requests.head(*args, **kwargs)
 
@@ -455,7 +464,7 @@ class FlickrMirrorer(object):
 
         # did_download_file = False
 
-        print('_________DownloadPhoto, got photo = %s' % photo)
+        # print('_________DownloadPhoto, got photo = %s' % photo)
 
         updatedFiles = set()
 

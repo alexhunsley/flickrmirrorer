@@ -505,8 +505,11 @@ class FlickrMirrorer(object):
                     sys.stderr.write('Error reading %s: %s\n' % (metadata_filename, ex))
                     sys.exit(1)
             except Exception as exe:
-                # download again, to be sure
-                should_download_photo = True
+                pass
+                # print('Exception: ', exe)
+
+                # xx download again, to be sure
+                # should_download_photo = True
                 #print('exception comparing local metadata and photo metadata: ', exe)
                 #print('photo metadata dict: ', photo)
                 #print('local metadata dict: ', metadata)
@@ -606,6 +609,8 @@ class FlickrMirrorer(object):
         # Fetch list of photos
         photos = []
 
+        download_errors = []
+        
         num_pages = int(math.ceil(float(album['photos']) / NUM_PHOTOS_PER_BATCH))
         for current_page in range(1, num_pages + 1):
             # Fetch photos in this album
@@ -630,8 +635,17 @@ class FlickrMirrorer(object):
                         if len(new_or_modified_files_ret) > 0:
                             self._verbose("   >>>>>>>>> Downloaded a missing photo during album mirroring: %s" % new_or_modified_files_ret)
                     except VideoDownloadError as e:
-                        pass
+                        download_errors.append(e)
 
+        if download_errors:
+            sys.stderr.write(
+                'The Flickr API does not allow downloading original video files.\n'
+                'Please save the files listed below to the %s directory.\n'
+                'Note: You must be logged into your Flickr account in order to download '
+                'your full resolution videos!\n' % self.photostream_dir)
+            for error in download_errors:
+                sys.stderr.write('  %s\n' % error)
+            sys.exit(1)
 
         # Include list of photo IDs in metadata, so we can tell if photos
         # were added or removed from the album when mirroring in the future.
@@ -696,6 +710,9 @@ class FlickrMirrorer(object):
         _ensure_dir_exists(album_dir)
 
         current_page = 1
+
+        download_errors = []
+
         while True:
             # Fetch list of photos that aren't in any album
             rsp = self._flickrapi_photos_getNotInSet(
@@ -718,20 +735,34 @@ class FlickrMirrorer(object):
                         if len(new_or_modified_files_ret) > 0:
                             self._verbose("   >>>>>>>>> Downloaded a missing photo during mirroring of 'not in any album' dir: %s" % new_or_modified_files_ret)
                     except VideoDownloadError as e:
-                        pass
+                        download_errors.append(e)
 
             if not photos:
                 # We've reached the end of the photostream. Stop looping.
                 break
 
-            for photo in photos:
-                photo_basename = self._get_photo_basename(photo)
-                photo_fullname = os.path.join(self.photostream_dir, photo_basename)
-                photo_relname = os.path.relpath(photo_fullname, album_dir)
-                symlink_filename = os.path.join(album_dir, photo_basename)
-                os.symlink(photo_relname, symlink_filename)
+            try:
+                for photo in photos:
+                    photo_basename = self._get_photo_basename(photo)
+                    photo_fullname = os.path.join(self.photostream_dir, photo_basename)
+                    photo_relname = os.path.relpath(photo_fullname, album_dir)
+                    symlink_filename = os.path.join(album_dir, photo_basename)
+                    os.symlink(photo_relname, symlink_filename)
+            except VideoDownloadError as e:
+                # just create the symlinks we can. Rest are created after video is manually downloaded
+                pass
 
             current_page += 1
+
+        if download_errors:
+            sys.stderr.write(
+                'The Flickr API does not allow downloading original video files.\n'
+                'Please save the files listed below to the %s directory.\n'
+                'Note: You must be logged into your Flickr account in order to download '
+                'your full resolution videos!\n' % self.photostream_dir)
+            for error in download_errors:
+                sys.stderr.write('  %s\n' % error)
+            sys.exit(1)
 
     def _mirror_collections(self):
         """Create a directory for each collection, and create symlinks to the

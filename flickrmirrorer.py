@@ -445,7 +445,7 @@ class FlickrMirrorer(object):
             sys.exit(1)
 
         # Error out if we didn't fetch any photos
-        if not new_or_modified_files:
+        if self.delete_unknown and not new_or_modified_files:
             sys.stderr.write('Error: The Flickr API returned an empty list of photos. '
                              'Bailing out without deleting any local copies in case this is an anomaly.\n')
             sys.exit(1)

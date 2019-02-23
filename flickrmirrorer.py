@@ -273,9 +273,9 @@ class FlickrMirrorer(object):
         _ensure_dir_exists(self.dest_dir)
 
         # Fetch photos
-        # self._download_all_photos()
+        self._download_all_photos()
         # tmp can delete below when above goes back!
-        _ensure_dir_exists(self.photostream_dir)
+        # _ensure_dir_exists(self.photostream_dir)
 
         # Create albums and collections
         self._mirror_albums()

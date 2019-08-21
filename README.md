@@ -1,3 +1,8 @@
+IMPORTANT
+=========
+*This is not currently a usable fork of flickrmirrorer. I recommend looking at the original repo instead (https://github.com/markdoliner/flickrmirrorer).*
+
+
 Overview
 ========
 A small command-line python script that creates a local backup of your

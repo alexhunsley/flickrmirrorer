@@ -37,6 +37,12 @@
 # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
+#
+#
+# Summary of AH findings:
+# There can be photos in albums feed (and possibly 'not in album' feed) that aren't in returned from the photostream.
+# There can be movies in the photostream feed that aren't seen elsewhere.
+#
 
 import argparse
 import datetime
@@ -90,6 +96,8 @@ NUM_PHOTOS_PER_BATCH = 500
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
+lastCallTime = 0
+
 def universal_rate_limit(limitTimeSecs):
     class local:
         lastCallTime = 0
@@ -97,15 +105,19 @@ def universal_rate_limit(limitTimeSecs):
     def real_universal_rate_limit(function):
         @wraps(function)
         def wrapper(*args, **kwargs):
+            global lastCallTime
+            
             nowTime = current_milli_time()
-            millisSinceLastCall = nowTime - local.lastCallTime
+            # millisSinceLastCall = nowTime - local.lastCallTime
+            millisSinceLastCall = nowTime - lastCallTime
 
             waitTimeRequired = limitTimeSecs - millisSinceLastCall / 1000.0
 
             if waitTimeRequired > 0: 
                 time.sleep(waitTimeRequired)
 
-            local.lastCallTime = current_milli_time()
+            # local.lastCallTime = current_milli_time()
+            lastCallTime = current_milli_time()
 
             return function(*args, **kwargs)
 
